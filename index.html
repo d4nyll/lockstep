@@ -1,0 +1,709 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lockstep demo</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #fff; --ink: #1d1d1f; --muted: #6b6b70; --line: #e2e2e0;
+    --boundary: #3b5bdb; --contribution: #2b8a3e; --termination: #c92a2a;
+    --acked: #e9ecef; --deliverable: #ffe066; --accent: #3b5bdb;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; background: var(--bg); color: var(--ink); }
+  header { padding: 18px 24px 4px; }
+  h1 { margin: 0 0 4px; font-size: 22px; }
+  h2 { margin: 0 0 10px; font-size: 15px; }
+  header p { margin: 0; color: var(--muted); max-width: 80ch; }
+  .bar { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 24px; background: var(--bg); border-bottom: 1px solid var(--line); }
+  .clock { font: 600 13px ui-monospace, SFMono-Regular, Menlo, monospace; margin-right: 6px; }
+  main { display: grid; grid-template-columns: 380px 1fr; gap: 16px; padding: 16px 24px 24px; }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
+  details > summary { cursor: pointer; font-weight: 600; font-size: 15px; }
+  details[open] > summary { margin-bottom: 10px; }
+  .actor { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+  .actor h3 { margin: 0 0 4px; font-size: 14px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .actor h4 { margin: 8px 0 2px; font-size: 12px; color: var(--muted); font-weight: 600; }
+  .badge { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: var(--acked); color: var(--muted); }
+  .badge.on { background: #d3f9d8; color: #2b8a3e; }
+  .badge.current { background: #dbe4ff; color: var(--boundary); }
+  .badge.complete { background: #d3f9d8; color: var(--contribution); }
+  .badge.incomplete { background: #fff3bf; color: #946200; }
+  .badge.dead { background: #ffe3e3; color: var(--termination); }
+  .stats { color: var(--muted); font-size: 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 5px; }
+  button { font: inherit; font-size: 13px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 6px; background: #fff; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  input[type=text], input[type=number], select, textarea { font: inherit; font-size: 13px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+  input[type=text] { width: 120px; } input.wide { width: 210px; } input[type=number] { width: 72px; }
+  textarea { width: 100%; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  label { font-size: 13px; }
+  .tour { display: flex; gap: 12px; align-items: flex-start; }
+  .tour p { margin: 0; flex: 1; min-height: 3em; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .tabs button.sel { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .strip { display: flex; flex-wrap: wrap; gap: 6px; }
+  .entry { border-left: 4px solid; border-radius: 6px; background: var(--bg); padding: 4px 8px; font-size: 12px; min-width: 92px; }
+  .entry b { display: block; }
+  .entry.boundary { border-color: var(--boundary); } .entry.contribution { border-color: var(--contribution); } .entry.termination { border-color: var(--termination); }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); font-size: 13px; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  table.matrix { width: auto; }
+  .matrix td.cell { text-align: center; width: 34px; font-weight: 600; font-size: 12px; border: 1px solid var(--line); }
+  .cell.acked { background: var(--acked); color: var(--muted); }
+  .cell.deliverable { background: var(--deliverable); }
+  .cell.held { background: repeating-linear-gradient(45deg, #fff, #fff 4px, #f1f3f5 4px, #f1f3f5 8px); color: #adb5bd; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 5px; vertical-align: -2px; border: 1px solid var(--line); }
+  .legend .acked::before { background: var(--acked); } .legend .deliverable::before { background: var(--deliverable); }
+  .legend .held::before { background: repeating-linear-gradient(45deg, #fff, #fff 3px, #dee2e6 3px, #dee2e6 6px); }
+  .settings { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px 16px; }
+  .settings label { display: flex; justify-content: space-between; gap: 8px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #log { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 340px; overflow: auto; margin: 0; white-space: pre-wrap; }
+  #log .err { color: var(--termination); } #log .note { color: var(--boundary); } #log .sys { color: var(--muted); } #log .say { color: #946200; font-weight: 600; }
+  .empty { color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Lockstep</h1>
+  <p>Participants work on a task in rounds. Each participant sees the others' work for a round only once the coordinator ends that round. This page runs a Lockstep server in your browser on a virtual clock. Take a tour, or drive the actors yourself.</p>
+</header>
+<div class="bar">
+  <span class="clock" id="clock"></span>
+  <button data-action="tick" data-ms="100">+0.1 s</button>
+  <button data-action="tick" data-ms="1000">+1 s</button>
+  <button data-action="next-event" id="next-event">Next event</button>
+  <button data-action="play" id="play">Play</button>
+  <button data-action="restart">Restart server</button>
+  <button data-action="purge">Run PurgeExpiredStreams</button>
+  <button data-action="reset">Reset everything</button>
+</div>
+<main>
+  <div>
+    <section>
+      <h2>Tour</h2>
+      <div class="row" style="margin:0 0 8px">
+        <select id="chapter" data-key="chapter"></select>
+      </div>
+      <div class="tour">
+        <p id="tour-text"></p>
+        <button class="primary" data-action="tour-next" id="tour-next">Start</button>
+      </div>
+    </section>
+    <section>
+      <h2>New stream</h2>
+      <div id="create"></div>
+    </section>
+    <section>
+      <h2>Actors</h2>
+      <div id="actors"></div>
+    </section>
+  </div>
+  <div>
+    <section>
+      <div class="tabs" id="tabs"></div>
+      <div id="stream-info" class="stats"></div>
+      <div id="strip" class="strip" style="margin-top:8px"></div>
+    </section>
+    <section>
+      <h2>Rounds</h2>
+      <div id="rounds"></div>
+    </section>
+    <section>
+      <h2>What each subscriber is allowed to be notified of</h2>
+      <div id="matrix"></div>
+      <div class="legend">
+        <span class="acked">at or below its floor (acknowledged)</span>
+        <span class="deliverable">in its next notification</span>
+        <span class="held">above its horizon (held back)</span>
+      </div>
+    </section>
+    <section>
+      <h2>Pending dispatches</h2>
+      <div id="dispatches"></div>
+    </section>
+    <section>
+      <h2>Log</h2>
+      <pre id="log"></pre>
+    </section>
+    <section>
+      <details>
+        <summary>Request console</summary>
+        <div class="row" style="margin-bottom:6px">
+          <select data-key="console.actor" id="console-actor"></select>
+          <select data-key="console.op" id="console-op"></select>
+          <button class="primary" data-action="console-send">Send</button>
+        </div>
+        <textarea id="console-body" data-key="console.body" rows="6"></textarea>
+      </details>
+    </section>
+    <section>
+      <details>
+        <summary>Settings</summary>
+        <div class="settings" id="settings"></div>
+        <div class="row" style="margin-top:8px"><button class="primary" data-action="apply-settings">Restart the server with these settings</button></div>
+      </details>
+    </section>
+  </div>
+</main>
+<script src="lockstep.js"></script>
+<script>
+'use strict';
+const ACTORS = ['C', 'C2', 'PM', 'DEV', 'OPS', 'AN'];
+const T0 = Date.UTC(2026, 11, 1);
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const rel = (ms) => `t=${((ms - T0) / 1000).toFixed(1)} s`;
+const relIso = (text) => text.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z/g, (m) => rel(Date.parse(m)));
+const seqList = (entries) => `[${entries.map((e) => '#' + e.sequence).join(', ')}]`;
+
+let server, sel, clients, peers, endpoints, draft, playing, tour, buffer;
+
+// The far end of every channel. peers holds each actor's side of its connections, and endpoints
+// holds what answers at each callback_address.
+const network = {
+  behavior(ch) {
+    if (ch.kind === 'connection') {
+      const p = peer(ch.subscriber_id);
+      return { outcome: p.fails ? 'failure' : 'success', latency: p.latency };
+    }
+    const e = endpoint(ch.callback_address);
+    return { outcome: e.outcome, latency: e.latency };
+  },
+  deliver(n, ch) {
+    obtain(n.subscriber_id, n);
+    emit(`  → ${n.subscriber_id} receives ${seqList(n.entries)} ${ch.kind === 'connection' ? 'through its connection' : 'at ' + ch.callback_address}`, 'note');
+  },
+  event(text) {
+    emit(`  · ${relIso(text)}`, 'sys');
+  },
+};
+
+function peer(actor) { return peers[actor] ??= { latency: 0, fails: false }; }
+function endpoint(address) { return endpoints[address] ??= { outcome: 'success', latency: 0 }; }
+function client(actor, stream_id = sel) { return (clients[actor] ??= {})[stream_id] ??= { highest: 0 }; }
+function obtain(actor, n) {
+  const c = client(actor, n.stream_id);
+  for (const e of n.entries) c.highest = Math.max(c.highest, e.sequence);
+}
+
+function reset(config) {
+  server = new Lockstep.Server({ network, clock: T0, config });
+  sel = null;
+  clients = {};
+  peers = {};
+  endpoints = {};
+  draft = { chapter: draft?.chapter ?? '0' };
+  tour = { chapter: Number(draft.chapter), step: 0 };
+  setPlaying(false);
+  $('log').innerHTML = '';
+  render();
+}
+
+function log(text, cls = '') {
+  $('log').insertAdjacentHTML('beforeend', `<span class="${cls}">${esc(text)}</span>\n`);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+function emit(text, cls) { buffer ? buffer.push([text, cls]) : log(text, cls); }
+
+// Runs fn while collecting what the server reports, then logs the collected lines after fn's own.
+function collect(fn) {
+  buffer = [];
+  try {
+    return fn();
+  } finally {
+    const events = buffer;
+    buffer = null;
+    for (const [text, cls] of events) log(text, cls);
+  }
+}
+
+// Calls one operation as actor and logs the request, then the result, then what the server did.
+function call(actor, operation, fields = {}) {
+  const shown = Object.entries(fields).filter(([k]) => k !== 'stream_id').map(([k, v]) => `${k}=${fmt(v)}`).join(', ');
+  log(`[${rel(server.clock)}] ${actor ?? '(no subscriber_id)'}: ${operation}(${shown})`);
+  let result;
+  collect(() => {
+    try {
+      result = server.call(operation, { subscriber_id: actor, ...fields });
+      log(`  ✓ ${summarize(operation, result, actor)}`);
+    } catch (e) {
+      if (!e.code) throw e;
+      log(`  ✗ refused: ${e.code} (${e.message})${e.data ? ', data ' + JSON.stringify(e.data) : ''}`, 'err');
+    }
+  });
+  settle();
+  return result;
+}
+
+function fmt(v) {
+  if (Array.isArray(v)) return `[${v.join(', ')}]`;
+  return typeof v === 'string' ? `"${v}"` : String(v);
+}
+
+function summarize(operation, r, actor) {
+  if (operation === 'PullNotification') { obtain(actor, r); return `notification ${seqList(r.entries)}`; }
+  if (operation === 'ReadEntries') return `entries ${seqList(r)}`;
+  if (operation === 'ListSubscribedStreams') return `streams [${r.map((s) => `${s.id} "${s.title}"`).join(', ')}]`;
+  if (operation === 'PurgeExpiredStreams') return `removed [${r.join(', ')}]`;
+  if (operation === 'Connect') return 'connection open';
+  if (r && 'sequence' in r) return `#${r.sequence} ${describe(r)}`;
+  if (r && 'floor' in r) return `floor #${r.floor}, callback_address ${r.callback_address ?? 'null'}`;
+  if (r && 'coordinator_id' in r) {
+    if (operation === 'CreateStream') sel = r.id;
+    return `stream ${r.id} "${r.title}", coordinator ${r.coordinator_id}, to_be_purged_at ${r.to_be_purged_at ? relIso(r.to_be_purged_at) : 'null'}`;
+  }
+  return JSON.stringify(r);
+}
+
+function describe(e) {
+  if (e.type === 'boundary') return `opens round ${e.round}, roster [${e.payload.roster.join(', ')}]`;
+  if (e.type === 'termination') return `ends round ${e.round}, terminates`;
+  return `round ${e.round}: "${e.payload}"`;
+}
+
+// Runs the steps due at the current time (e.g. after a debounce interval of 0), then redraws.
+function settle() {
+  advance(server.clock);
+}
+
+function advance(time) {
+  const before = $('log').childElementCount;
+  collect(() => server.advanceTo(time));
+  if ($('log').childElementCount > before) {
+    $('log').children[before].insertAdjacentHTML('beforebegin', `<span class="sys">[${rel(server.clock)}] the server, on its own:</span>\n`);
+  }
+  if (sel && !server.streams.has(sel)) sel = null;
+  render();
+}
+
+function nextEvent() {
+  const t = server.nextEventAt();
+  if (t !== null) advance(t);
+}
+
+function setPlaying(on) {
+  if (playing) clearInterval(playing);
+  playing = on ? setInterval(() => advance(server.clock + 100), 100) : null;
+  $('play').textContent = on ? 'Pause' : 'Play';
+}
+
+function restart(config) {
+  log(`[${rel(server.clock)}] operator: restarts the server`);
+  collect(() => {
+    try {
+      server.restart(config);
+    } catch (e) {
+      log(`  ✗ ${e.message}. The previous server keeps running`, 'err');
+    }
+  });
+  settle();
+}
+
+// Actions that read their arguments from the actor cards
+
+function val(key, fallback) { return draft[key] ?? fallback; }
+function stream() { return sel && server.streams.get(sel); }
+// A roster checkbox the user hasn't touched starts checked if the current round's roster names that actor.
+function onRoster(prefix, a) {
+  const touched = draft[`${prefix}.roster.${a}`];
+  if (touched !== undefined) return touched;
+  if (prefix === 'create') return a === 'PM' || a === 'DEV';
+  const s = stream();
+  return !!s && server.roster(s, server.currentRound(s)).includes(a);
+}
+function rosterOf(prefix) { return ACTORS.filter((a) => onRoster(prefix, a)); }
+function defaultAddress(actor) { return `https://${actor.toLowerCase()}.example/hook`; }
+
+const actions = {
+  create() {
+    call(val('create.actor', 'C'), 'CreateStream', { title: val('create.title', 'Sprint 14'), roster: rosterOf('create') });
+  },
+  advance(a) { call(a, 'AdvanceStream', { stream_id: sel, expected_sequence: client(a).highest, roster: rosterOf(a) }); },
+  terminate(a) { call(a, 'TerminateStream', { stream_id: sel, expected_sequence: client(a).highest }); },
+  rename(a) { call(a, 'PatchStream', { stream_id: sel, title: val(`${a}.title`, stream().title) }); },
+  handover(a) { call(a, 'PatchStream', { stream_id: sel, coordinator_id: val(`${a}.handover`, 'C2') }); },
+  purgeAt(a) { call(a, 'PatchStream', { stream_id: sel, to_be_purged_at: new Date(server.clock + Number(val(`${a}.purgeIn`, 5)) * 1000).toISOString() }); },
+  keep(a) { call(a, 'PatchStream', { stream_id: sel, to_be_purged_at: null }); },
+  append(a) {
+    const rounds = server.namedRounds(stream(), a);
+    call(a, 'Append', { stream_id: sel, round: Number(val(`${a}.round`, rounds[rounds.length - 1])), payload: val(`${a}.payload`, '') });
+  },
+  connect(a) { call(a, 'Connect', { stream_id: sel }); },
+  disconnect(a) {
+    log(`[${rel(server.clock)}] ${a}: closes its connection`);
+    collect(() => server.disconnect(a, sel));
+    settle();
+  },
+  setCallback(a) { call(a, 'PatchSubscription', { stream_id: sel, callback_address: val(`${a}.address`, defaultAddress(a)) }); },
+  clearCallback(a) { call(a, 'PatchSubscription', { stream_id: sel, callback_address: null }); },
+  pull(a) { call(a, 'PullNotification', { stream_id: sel }); },
+  ack(a) { call(a, 'Acknowledge', { stream_id: sel, sequence: client(a).highest }); },
+  getSubscription(a) { call(a, 'GetSubscription', { stream_id: sel }); },
+  list(a) { call(a, 'ListSubscribedStreams'); },
+  getStream(a) { call(a, 'GetStream', { stream_id: sel }); },
+  read(a) {
+    const entries = call(a, 'ReadEntries', { stream_id: sel, from_sequence: 1 });
+    if (entries) obtain(a, { stream_id: sel, entries });
+    render();
+  },
+};
+
+// Rendering
+
+function render() {
+  const focus = document.activeElement?.dataset?.key;
+  const caret = document.activeElement?.selectionStart;
+  const s = stream();
+  $('clock').textContent = `${new Date(server.clock).toISOString().replace('T', ' ').replace('Z', ' UTC')} (${rel(server.clock)})`;
+  const next = server.nextEventAt();
+  $('next-event').textContent = next === null ? 'Next event (none)' : `Next event (${rel(next)})`;
+  $('next-event').disabled = next === null;
+  renderCreate();
+  renderActors(s);
+  renderTabs();
+  renderStream(s);
+  renderRounds(s);
+  renderMatrix(s);
+  renderDispatches(s);
+  renderConsole();
+  renderSettings();
+  renderTour();
+  if (focus) {
+    const el = document.querySelector(`[data-key="${CSS.escape(focus)}"]`);
+    if (el && el !== document.activeElement) {
+      el.focus();
+      if (caret != null && el.setSelectionRange && el.type === 'text') el.setSelectionRange(caret, caret);
+    }
+  }
+}
+
+function rosterBoxes(prefix, except) {
+  return ACTORS.filter((p) => p !== except && p !== 'AN')
+    .map((p) => `<label><input type="checkbox" data-key="${prefix}.roster.${p}" ${onRoster(prefix, p) ? 'checked' : ''}> ${p}</label>`).join(' ');
+}
+
+function options(list, chosen) {
+  return list.map((o) => `<option ${String(o) === String(chosen) ? 'selected' : ''}>${esc(o)}</option>`).join('');
+}
+
+function renderCreate() {
+  const actor = val('create.actor', 'C');
+  $('create').innerHTML = `<div class="row">Coordinator <select data-key="create.actor">${options(ACTORS, actor)}</select>
+    <input type="text" data-key="create.title" value="${esc(val('create.title', 'Sprint 14'))}"></div>
+    <div class="row">Roster: ${rosterBoxes('create', actor)}</div>
+    <div class="row"><button class="primary" data-action="create">CreateStream</button></div>`;
+}
+
+function roleOf(s, a) {
+  if (!s) return 'no stream selected';
+  if (a === s.coordinator_id) return 'coordinator';
+  if (!s.subscriptions.has(a)) return 'no subscription';
+  return server.namedRounds(s, a).length ? 'participant' : 'former coordinator';
+}
+
+const OUTCOMES = [['success', 'succeeds'], ['failure', 'fails'], ['none', "doesn't respond"]];
+
+function renderActors(s) {
+  const live = s && !server.terminated(s);
+  $('actors').innerHTML = ACTORS.map((a) => {
+    const sub = s && s.subscriptions.get(a);
+    const role = roleOf(s, a);
+    const btn = (action, label, enabled = true) => `<button data-action="${action}" data-actor="${a}" ${enabled ? '' : 'disabled'}>${label}</button>`;
+    let html = `<div class="actor"><h3>${a} <span class="stats">${role}</span>`;
+    if (sub) {
+      html += sub.connection ? ' <span class="badge on">connected</span>' : '';
+      html += sub.callback_address ? ' <span class="badge on">callback</span>' : '';
+      html += !sub.connection && !sub.callback_address ? ' <span class="badge">no channel</span>' : '';
+    }
+    html += '</h3>';
+    if (sub) {
+      const p = peer(a);
+      const address = val(`${a}.address`, defaultAddress(a));
+      const e = endpoint(address);
+      const horizon = server.horizon(s, a);
+      html += `<div class="stats">floor #${sub.floor} · horizon ${horizon ? '#' + horizon : 'none'} · highest obtained #${client(a).highest}</div>
+        <h4>Connection</h4>
+        <div class="row">${sub.connection ? btn('disconnect', 'Close') : btn('connect', 'Connect')}
+          <label>writes take <input type="number" min="0" step="100" data-key="peer.${a}.latency" value="${p.latency}"> ms</label>
+          <label><input type="checkbox" data-key="peer.${a}.fails" ${p.fails ? 'checked' : ''}> writes fail</label></div>
+        <h4>Callback</h4>
+        <div class="row"><input type="text" class="wide" data-key="${a}.address" value="${esc(address)}">
+          ${btn('setCallback', 'Set')} ${btn('clearCallback', 'Clear', !!sub.callback_address)}</div>
+        <div class="row"><label>the endpoint <select data-key="endpoint.${a}.outcome">${OUTCOMES.map(([v, label]) =>
+          `<option value="${v}" ${e.outcome === v ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+          <label>after <input type="number" min="0" step="100" data-key="endpoint.${a}.latency" value="${e.latency}"> ms</label></div>
+        <h4>Subscription</h4>
+        <div class="row">${btn('pull', 'Pull')} ${btn('ack', `Ack #${client(a).highest}`, client(a).highest > 0)} ${btn('getSubscription', 'GetSubscription')}</div>`;
+    }
+    if (role === 'coordinator') {
+      html += `<h4>Coordinator</h4>
+        <div class="row">Roster: ${rosterBoxes(a, a)}</div>
+        <div class="row">${btn('advance', `Advance (expected #${client(a).highest})`, live)} ${btn('terminate', 'Terminate', live)}</div>
+        <div class="row"><input type="text" data-key="${a}.title" value="${esc(val(`${a}.title`, s.title))}"> ${btn('rename', 'Rename')}</div>
+        <div class="row"><select data-key="${a}.handover">${options(ACTORS.filter((x) => x !== a), val(`${a}.handover`, 'C2'))}</select> ${btn('handover', 'Make coordinator')}</div>
+        <div class="row">Purge in <input type="number" min="0" data-key="${a}.purgeIn" value="${esc(val(`${a}.purgeIn`, 5))}"> s ${btn('purgeAt', 'Set')} ${btn('keep', 'Keep forever')}</div>`;
+    }
+    if (role === 'participant') {
+      const rounds = server.namedRounds(s, a);
+      html += `<h4>Participant</h4><div class="row">Round <select data-key="${a}.round">${options(rounds, val(`${a}.round`, rounds[rounds.length - 1]))}</select>
+        <input type="text" data-key="${a}.payload" placeholder="payload" value="${esc(val(`${a}.payload`, ''))}"> ${btn('append', 'Append', live)}</div>`;
+    }
+    html += `<h4>Anyone</h4><div class="row">${btn('list', 'ListSubscribedStreams')} ${btn('getStream', 'GetStream', !!s)} ${btn('read', 'ReadEntries', !!s)}</div></div>`;
+    return html;
+  }).join('');
+}
+
+function renderTabs() {
+  const ids = [...server.streams.keys()];
+  $('tabs').innerHTML = ids.length
+    ? ids.map((id) => `<button data-action="select" data-stream="${id}" class="${id === sel ? 'sel' : ''}">${id} "${esc(server.streams.get(id).title)}"</button>`).join('')
+    : '<span class="empty">No streams. Create one under New stream.</span>';
+}
+
+function renderStream(s) {
+  if (!s) { $('stream-info').innerHTML = ''; $('strip').innerHTML = ''; return; }
+  const state = server.terminated(s) ? '<span class="badge dead">terminated</span>' : '<span class="badge on">live</span>';
+  $('stream-info').innerHTML = `${state} coordinator <b>${esc(s.coordinator_id)}</b> · created ${rel(s.created_at)} · to_be_purged_at ${s.to_be_purged_at === null ? 'null' : rel(s.to_be_purged_at)} · former coordinators [${server.formerCoordinators(s).join(', ')}]`;
+  $('strip').innerHTML = s.entries.map((e) => `<div class="entry ${e.type}"><b>#${e.sequence} ${e.type}</b>${esc(e.subscriber_id)}: ${esc(describe(e))}</div>`).join('');
+}
+
+function renderRounds(s) {
+  if (!s) { $('rounds').innerHTML = '<span class="empty">No stream selected.</span>'; return; }
+  const cur = server.currentRound(s);
+  const live = !server.terminated(s);
+  const rows = [];
+  for (let r = 1; r <= cur; r++) {
+    const roster = server.roster(s, r);
+    const done = s.entries.filter((e) => e.type === 'contribution' && e.round === r);
+    const complete = roster.every((p) => done.some((e) => e.subscriber_id === p));
+    const contribs = roster.map((p) => {
+      const e = done.find((x) => x.subscriber_id === p);
+      return e ? `${p} #${e.sequence}` : `<span class="empty">${p} pending</span>`;
+    }).join(', ') || '<span class="empty">empty roster</span>';
+    const now = r === cur && live;
+    rows.push(`<tr><td>${r}</td><td>[${roster.join(', ')}]</td><td>${contribs}</td><td>
+      <span class="badge ${now ? 'current' : ''}">${now ? 'current' : 'past'}</span>
+      <span class="badge ${complete ? 'complete' : 'incomplete'}">${complete ? 'complete' : 'incomplete'}</span></td></tr>`);
+  }
+  $('rounds').innerHTML = `<table><tr><th>Round</th><th>Roster</th><th>Contributions</th><th>Status</th></tr>${rows.join('')}</table>`;
+}
+
+function renderMatrix(s) {
+  if (!s) { $('matrix').innerHTML = '<span class="empty">No stream selected.</span>'; return; }
+  const head = s.entries.map((e) => `<th style="text-align:center">#${e.sequence}</th>`).join('');
+  const rows = ACTORS.filter((a) => s.subscriptions.has(a)).map((a) => {
+    const floor = s.subscriptions.get(a).floor;
+    const horizon = server.horizon(s, a);
+    const cells = s.entries.map((e) => {
+      const cls = e.sequence <= floor ? 'acked' : e.sequence <= horizon ? 'deliverable' : 'held';
+      return `<td class="cell ${cls}" title="#${e.sequence} ${e.type}">${e.type[0].toUpperCase()}</td>`;
+    }).join('');
+    return `<tr><th>${a}</th>${cells}</tr>`;
+  }).join('');
+  $('matrix').innerHTML = `<table class="matrix"><tr><th></th>${head}</tr>${rows}</table>`;
+}
+
+function renderDispatches(s) {
+  const t = (x) => (x === null ? '' : rel(x));
+  const rows = s ? [...s.subscriptions.values()].filter((sub) => sub.dispatch).map((sub) => {
+    const d = sub.dispatch;
+    return `<tr><td>${sub.subscriber_id}</td><td>${d.channel}</td><td>${d.attempts}</td><td>${d.inFlight ? 'until ' + t(d.inFlight.completesAt) : ''}</td>
+      <td>${t(d.nextAttemptAt)}</td><td>${t(d.intervalEnd)}</td><td>${t(d.limitEnd)}</td></tr>`;
+  }) : [];
+  $('dispatches').innerHTML = rows.length
+    ? `<table><tr><th>Subscriber</th><th>Channel</th><th>Attempts</th><th>In flight</th><th>Next attempt</th><th>Debounce interval ends</th><th>Debounce limit ends</th></tr>${rows.join('')}</table>`
+    : '<span class="empty">No dispatch is pending on this stream.</span>';
+}
+
+function template(op) {
+  const id = sel ?? 's1';
+  const fields = {
+    GetStream: { stream_id: id }, ReadEntries: { stream_id: id, from_sequence: 1, limit: 10 }, ListSubscribedStreams: {},
+    GetSubscription: { stream_id: id }, PatchSubscription: { stream_id: id, callback_address: 'https://pm.example/hook' },
+    Connect: { stream_id: id }, PullNotification: { stream_id: id }, Acknowledge: { stream_id: id, sequence: 1 },
+    CreateStream: { title: 'Sprint 15', roster: ['PM', 'DEV'] }, PatchStream: { stream_id: id, title: 'Renamed' },
+    AdvanceStream: { stream_id: id, expected_sequence: 1, roster: ['PM'] }, TerminateStream: { stream_id: id, expected_sequence: 1 },
+    Append: { stream_id: id, round: 1, payload: 'hello' }, PurgeExpiredStreams: {},
+  };
+  return JSON.stringify(fields[op], null, 2);
+}
+
+function renderConsole() {
+  const op = val('console.op', 'Append');
+  if (document.activeElement !== $('console-actor')) $('console-actor').innerHTML = options(['(none)', ...ACTORS], val('console.actor', 'PM'));
+  if (document.activeElement !== $('console-op')) $('console-op').innerHTML = options(Object.keys(Lockstep.OPERATIONS), op);
+  if (draft['console.body'] === undefined) draft['console.body'] = template(op);
+  if (document.activeElement !== $('console-body')) $('console-body').value = draft['console.body'];
+}
+
+function renderSettings() {
+  if (document.activeElement && $('settings').contains(document.activeElement)) return;
+  const unit = (k) => (typeof server.config[k] === 'number' && !['UINT_MAX', 'LOCKSTEP_DISPATCH_MAX_ATTEMPTS'].includes(k) ? ' (ms)' : '');
+  $('settings').innerHTML = Object.entries(server.config).map(([k, v]) => {
+    const value = val(`config.${k}`, v);
+    const input = typeof v === 'boolean'
+      ? `<input type="checkbox" data-key="config.${k}" ${value ? 'checked' : ''}>`
+      : `<input type="number" data-key="config.${k}" value="${esc(value)}">`;
+    return `<label>${k}${unit(k)} ${input}</label>`;
+  }).join('');
+}
+
+// Tour
+
+function setEndpoint(address, outcome, latency = 0) { endpoints[address] = { outcome, latency }; render(); }
+function setPeer(actor, p) { Object.assign(peer(actor), p); render(); }
+function wait(ms) { advance(server.clock + ms); }
+const ackAll = (ids) => ids.forEach((a) => actions.ack(a));
+const create = (actor, roster) => call(actor, 'CreateStream', { title: 'Sprint 14', roster });
+const append = (actor, round, payload) => call(actor, 'Append', { stream_id: sel, round, payload });
+const advanceTo = (roster) => call(stream().coordinator_id, 'AdvanceStream', { stream_id: sel, expected_sequence: server.highest(stream()), roster });
+
+const chapters = [
+  { title: 'Rounds and visibility', steps: [
+    ['C, the coordinator, creates a stream. Round 1 opens with PM and DEV on its roster.', () => create('C', ['PM', 'DEV'])],
+    ['C, PM and DEV connect. Each connection gets a notification carrying the boundary at #1.', () => ['C', 'PM', 'DEV'].forEach(actions.connect)],
+    ['Everyone acknowledges #1, which raises their floor, so the server never sends #1 to them again.', () => ackAll(['C', 'PM', 'DEV'])],
+    ['PM appends its round 1 work. Only C is notified. The horizon of PM and DEV is still #1, so the server holds PM\'s work back from DEV.', () => { append('PM', 1, 'spec draft'); actions.ack('C'); }],
+    ['DEV pulls. The notification is empty, because DEV can\'t see PM\'s work until the round ends.', () => actions.pull('DEV')],
+    ['DEV appends its round 1 work. Everyone on round 1\'s roster has contributed, so round 1 is complete.', () => { append('DEV', 1, 'prototype'); actions.ack('C'); }],
+    ['C advances to round 2 and adds OPS. The boundary at #4 releases #2 and #3 to PM and DEV. OPS is new, so its floor starts at #3.', () => advanceTo(['PM', 'DEV', 'OPS'])],
+    ['OPS connects and gets only #4, because the work from before it joined is at or below its floor. Everyone acknowledges.', () => { actions.connect('OPS'); ackAll(['C', 'PM', 'DEV', 'OPS']); }],
+    ['PM contributes to round 2. C advances to round 3 without waiting for DEV and OPS, and leaves OPS off the roster.', () => { append('PM', 2, 'plan'); actions.ack('C'); advanceTo(['PM', 'DEV']); }],
+    ['Everyone acknowledges #6. C closes its connection, and OPS appends its round 2 work late. The server accepts it, because round 2\'s roster names OPS. C has no channel, so nobody is notified.', () => { ackAll(['C', 'PM', 'DEV', 'OPS']); actions.disconnect('C'); append('OPS', 2, 'runbook'); }],
+    ['OPS tries to append for round 3. The server refuses with not_on_roster, because round 3\'s roster doesn\'t name OPS.', () => append('OPS', 3, 'more')],
+    ['C tries to advance. C last saw #6, but the highest sequence is #7, so the server refuses with stale_sequence.', () => actions.advance('C')],
+    ['C reconnects and receives #7. OPS\'s horizon stays at #6, the boundary that ended the last round whose roster named OPS.', () => { actions.connect('C'); actions.ack('C'); }],
+  ] },
+  { title: 'Callbacks and debouncing', steps: [
+    ['C creates a stream with PM, DEV and OPS on round 1\'s roster, and registers a callback_address instead of connecting. PM, DEV and OPS connect.', () => { create('C', ['PM', 'DEV', 'OPS']); actions.setCallback('C'); ['PM', 'DEV', 'OPS'].forEach(actions.connect); }],
+    ['Setting a callback_address is a trigger. C\'s dispatch waits out its 1 s debounce interval, then delivers #1. Everyone acknowledges.', () => { nextEvent(); ackAll(['C', 'PM', 'DEV', 'OPS']); }],
+    ['PM appends. A dispatch to C starts. Its debounce interval ends 1 s later, and its debounce limit 2 s later.', () => append('PM', 1, 'a')],
+    ['0.8 s later, DEV appends. The new dispatch replaces the first one, which made no attempt, so the new one keeps the debounce limit 2 s after PM\'s append.', () => { wait(800); append('DEV', 1, 'b'); }],
+    ['0.8 s later, OPS appends. The new debounce interval would end after the debounce limit.', () => { wait(800); append('OPS', 1, 'c'); }],
+    ['The debounce limit runs out first, and a single attempt carries all three contributions.', () => nextEvent()],
+  ] },
+  { title: 'Failed attempts and retries', steps: [
+    ['C creates a stream with PM and DEV. C and PM connect, and DEV registers a callback_address. DEV\'s first notification arrives after the debounce interval.', () => { create('C', ['PM', 'DEV']); actions.connect('C'); actions.connect('PM'); actions.setCallback('DEV'); nextEvent(); ackAll(['C', 'PM', 'DEV']); }],
+    ['DEV\'s endpoint starts failing. PM appends, and C advances. The boundary is a trigger for DEV.', () => { setEndpoint(defaultAddress('DEV'), 'failure'); append('PM', 1, 'a'); actions.ack('C'); advanceTo(['PM', 'DEV']); }],
+    ['After the debounce interval, attempt 1 fails. The server waits LOCKSTEP_DISPATCH_RETRY_BASE (1 s) before it retries.', () => nextEvent()],
+    ['DEV\'s endpoint stops responding. Attempt 2 gets no response within LOCKSTEP_RESPONSE_TIMEOUT (1.5 s), so it counts as failed. The wait doubles to 2 s.', () => { setEndpoint(defaultAddress('DEV'), 'none'); nextEvent(); nextEvent(); }],
+    ['DEV\'s endpoint fails again. LOCKSTEP_DISPATCH_MAX_ATTEMPTS is 3, so attempt 3 is the last, and the dispatch ends.', () => { setEndpoint(defaultAddress('DEV'), 'failure'); nextEvent(); }],
+    ['DEV\'s endpoint recovers, and C advances again. DEV\'s floor is still #1, so the new dispatch carries everything DEV missed.', () => { setEndpoint(defaultAddress('DEV'), 'success'); ackAll(['C', 'PM']); advanceTo(['PM', 'DEV']); nextEvent(); }],
+  ] },
+  { title: 'Connections and restarts', steps: [
+    ['C creates a stream with PM and DEV, and everyone connects. PM also registers a callback_address. Writes into PM\'s connection take 0.5 s.', () => { create('C', ['PM', 'DEV']); ['C', 'PM', 'DEV'].forEach(actions.connect); actions.setCallback('PM'); ackAll(['C', 'PM', 'DEV']); setPeer('PM', { latency: 500 }); }],
+    ['PM and DEV append, and C advances. The write to DEV completes at once. The write to PM is still in flight.', () => { append('PM', 1, 'a'); append('DEV', 1, 'b'); actions.ack('C'); advanceTo(['PM', 'DEV']); wait(100); }],
+    ['The server restarts, which closes every connection. PM\'s dispatch over its connection had not ended, so the server treats it as a trigger, and the new dispatch uses PM\'s callback_address.', () => restart()],
+    ['After the debounce interval, PM receives the round\'s entries at its callback_address.', () => nextEvent()],
+    ['Everyone acknowledges, and C and DEV reconnect. Their floors survived the restart, so their notifications are empty.', () => { ackAll(['C', 'PM', 'DEV']); actions.connect('C'); actions.connect('DEV'); }],
+    ['DEV\'s connection breaks, so the next write fails. C advances, and the server closes DEV\'s connection. DEV has no callback_address, so its dispatch ends without an attempt.', () => { setPeer('DEV', { fails: true }); advanceTo(['PM', 'DEV']); }],
+    ['DEV polls with PullNotification and catches up.', () => { setPeer('DEV', { fails: false }); actions.pull('DEV'); actions.ack('DEV'); }],
+  ] },
+  { title: 'Replacing the coordinator', steps: [
+    ['C creates a stream with PM. C and PM connect, and PM appends.', () => { create('C', ['PM']); actions.connect('C'); actions.connect('PM'); ackAll(['C', 'PM']); append('PM', 1, 'a'); actions.ack('C'); }],
+    ['C tries to make PM the coordinator. The server refuses, because a roster names PM.', () => call('C', 'PatchStream', { stream_id: sel, coordinator_id: 'PM' })],
+    ['C makes C2 the coordinator. The server creates a subscription for C2 and closes C\'s connection.', () => call('C', 'PatchStream', { stream_id: sel, coordinator_id: 'C2' })],
+    ['C2 connects and receives the whole stream, because its floor starts at 0.', () => { actions.connect('C2'); actions.ack('C2'); }],
+    ['C tries to advance, and the server refuses, because C isn\'t the coordinator anymore.', () => call('C', 'AdvanceStream', { stream_id: sel, expected_sequence: 2, roster: ['PM'] })],
+    ['C is a former coordinator, so its notifications are always empty, and C2 can\'t name C on a roster.', () => { actions.pull('C'); call('C2', 'AdvanceStream', { stream_id: sel, expected_sequence: 2, roster: ['PM', 'C'] }); }],
+  ] },
+  { title: 'Reading, termination and purging', steps: [
+    ['C creates a stream with PM, and PM appends. C lost the response to CreateStream, so it finds the stream with ListSubscribedStreams.', () => { create('C', ['PM']); append('PM', 1, 'a'); actions.list('C'); }],
+    ['AN holds no subscription, but anyone can read a stream. AN reads every entry, including PM\'s, which the server hasn\'t pushed to any participant yet. AN can\'t pull.', () => { actions.getStream('AN'); actions.read('AN'); call('AN', 'PullNotification', { stream_id: sel }); }],
+    ['C connects and terminates the stream. The server sets to_be_purged_at LOCKSTEP_RETENTION (60 s) ahead.', () => { actions.connect('C'); actions.terminate('C'); }],
+    ['The terminated stream refuses PM\'s Append and Connect.', () => { append('PM', 1, 'b'); actions.connect('PM'); }],
+    ['C keeps the stream indefinitely by setting to_be_purged_at to null, then changes it to 5 s from now.', () => { actions.keep('C'); actions.purgeAt('C'); }],
+    ['The server runs PurgeExpiredStreams every LOCKSTEP_PURGE_INTERVAL (10 s). Its next run removes the stream, and GetStream refuses with no_such_stream.', () => {
+      const id = sel;
+      while (server.streams.has(id) && server.nextEventAt() !== null) nextEvent();
+      call('C', 'GetStream', { stream_id: id });
+    }],
+  ] },
+];
+
+function renderTour() {
+  const ch = chapters[tour.chapter];
+  if (document.activeElement !== $('chapter')) {
+    $('chapter').innerHTML = chapters.map((c, i) => `<option value="${i}" ${i === tour.chapter ? 'selected' : ''}>${i + 1}. ${c.title}</option>`).join('');
+  }
+  const done = tour.step >= ch.steps.length;
+  $('tour-text').textContent = done
+    ? 'That\'s the end of this chapter. Pick another one, or drive the actors yourself.'
+    : `${tour.step + 1}/${ch.steps.length}. ${ch.steps[tour.step][0]}`;
+  $('tour-next').textContent = tour.step === 0 ? 'Start' : 'Next';
+  $('tour-next').disabled = done;
+}
+
+function tourNext() {
+  if (tour.step === 0) {
+    const chapter = tour.chapter;
+    reset();
+    tour.chapter = chapter;
+  }
+  const [say, step] = chapters[tour.chapter].steps[tour.step++];
+  log(`Tour: ${say}`, 'say');
+  step();
+  render();
+}
+
+// Events
+
+document.addEventListener('click', (ev) => {
+  const btn = ev.target.closest('button[data-action]');
+  if (!btn) return;
+  const { action, actor } = btn.dataset;
+  if (action === 'reset') return reset();
+  if (action === 'tour-next') return tourNext();
+  if (action === 'tick') return advance(server.clock + Number(btn.dataset.ms));
+  if (action === 'next-event') return nextEvent();
+  if (action === 'play') return setPlaying(!playing);
+  if (action === 'restart') return restart();
+  if (action === 'purge') return call('operator', 'PurgeExpiredStreams');
+  if (action === 'select') { sel = btn.dataset.stream; return render(); }
+  if (action === 'apply-settings') {
+    const config = { ...server.config };
+    for (const k of Object.keys(config)) if (`config.${k}` in draft) config[k] = draft[`config.${k}`];
+    return restart(config);
+  }
+  if (action === 'console-send') {
+    let body;
+    try { body = JSON.parse($('console-body').value); } catch (e) { return log(`  ✗ the request body is not JSON: ${e.message}`, 'err'); }
+    const who = val('console.actor', 'PM');
+    const result = call(who === '(none)' ? undefined : who, val('console.op', 'Append'), body);
+    if (result !== undefined) log(JSON.stringify(result, null, 2), 'sys');
+    return;
+  }
+  actions[action](actor);
+});
+
+document.addEventListener('change', (ev) => {
+  const t = ev.target;
+  const key = t.dataset.key;
+  if (!key) return;
+  const value = t.type === 'checkbox' ? t.checked : t.type === 'number' ? Number(t.value) : t.value;
+  draft[key] = value;
+  const [kind, who, prop] = key.split('.');
+  if (kind === 'peer') peer(who)[prop] = value;
+  if (kind === 'endpoint') endpoint(val(`${who}.address`, defaultAddress(who)))[prop] = value;
+  if (key === 'chapter') tour = { chapter: Number(value), step: 0 };
+  if (key === 'console.op') draft['console.body'] = template(value);
+  t.blur();
+  render();
+});
+
+document.addEventListener('input', (ev) => {
+  const t = ev.target;
+  if (t.dataset.key && t.type !== 'checkbox' && t.tagName !== 'SELECT') draft[t.dataset.key] = t.type === 'number' ? Number(t.value) : t.value;
+});
+
+reset();
+</script>
+</body>
+</html>
